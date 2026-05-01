@@ -1,12 +1,14 @@
 import streamlit as st
 import numpy as np
+import pandas as pd
 import joblib
+import os
 import tensorflow as tf
-
-# Load model and scaler
-model = tf.keras.models.load_model('app/model.keras')
-scaler = joblib.load('app/scaler.pkl')
-feature_names = joblib.load('app/feature_names.pkl')
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.callbacks import EarlyStopping
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler, LabelEncoder
 
 st.set_page_config(
     page_title="Student Performance Predictor",
@@ -14,20 +16,61 @@ st.set_page_config(
     layout="wide"
 )
 
+DATA_URL = "https://raw.githubusercontent.com/darshuuu808/student-performance-predictor/main/data/student-mat.csv"
+
+@st.cache_resource
+def load_or_train_model():
+    df = pd.read_csv(DATA_URL, sep=',')
+    df['pass'] = (df['G3'] >= 10).astype(int)
+    df = df.drop(columns=['G1', 'G2'])
+
+    cat_cols = df.select_dtypes(include='object').columns.tolist()
+    le = LabelEncoder()
+    for col in cat_cols:
+        df[col] = le.fit_transform(df[col])
+
+    X = df.drop(columns=['G3', 'pass'])
+    y = df['pass']
+    feature_names = list(X.columns)
+
+    scaler = MinMaxScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    X_train, X_temp, y_train, y_temp = train_test_split(X_scaled, y, test_size=0.3, random_state=42)
+    X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
+
+    model = keras.Sequential([
+        layers.Input(shape=(X_train.shape[1],)),
+        layers.Dense(64, activation='relu'),
+        layers.Dropout(0.3),
+        layers.Dense(32, activation='relu'),
+        layers.Dropout(0.2),
+        layers.Dense(1, activation='sigmoid')
+    ])
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+    callbacks = [EarlyStopping(patience=10, restore_best_weights=True, monitor='val_loss')]
+    model.fit(X_train, y_train, validation_data=(X_val, y_val),
+              epochs=100, batch_size=16, callbacks=callbacks, verbose=0)
+
+    test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)
+
+    return model, scaler, feature_names, round(test_acc * 100, 2)
+
 st.title("🎓 Student Performance Predictor")
 st.markdown("Predict whether a student will **Pass or Fail** based on their profile using a Neural Network trained on real student data.")
+
+with st.spinner("⏳ Loading model... (first load takes ~30 seconds)"):
+    model, scaler, feature_names, test_acc = load_or_train_model()
 
 # Sidebar
 with st.sidebar:
     st.header("📊 Model Info")
     st.markdown("**Model:** Neural Network (TensorFlow/Keras)")
-    st.markdown("**Dataset:** UCI Student Performance (Portuguese)")
+    st.markdown("**Dataset:** UCI Student Performance")
     st.markdown("**Task:** Binary Classification")
-    st.markdown("**Test Accuracy:** 90.82%")
-    st.markdown("**Val Accuracy:** 87.63%")
-    st.divider()
+    st.markdown(f"**Test Accuracy:** {test_acc}%")
     st.markdown("**Pass Threshold:** G3 ≥ 10")
-    st.markdown("**Neural Network beats Logistic Regression by 1.02%**")
 
 st.divider()
 st.subheader("📋 Enter Student Details")
@@ -69,43 +112,27 @@ with col3:
 
 st.divider()
 
-# Encode inputs
 encode_binary = lambda x: 1 if x == "yes" else 0
 
 input_dict = {
-    'school': 0,
-    'sex': 0,
-    'age': age,
-    'address': 0,
+    'school': 0, 'sex': 0, 'age': age, 'address': 0,
     'famsize': 0 if famsize == "LE3" else 1,
     'Pstatus': 1 if Pstatus == "T" else 0,
-    'Medu': Medu,
-    'Fedu': Fedu,
-    'Mjob': 0,
-    'Fjob': 0,
-    'reason': 0,
+    'Medu': Medu, 'Fedu': Fedu,
+    'Mjob': 0, 'Fjob': 0, 'reason': 0,
     'guardian': ["mother","father","other"].index(guardian),
-    'traveltime': 1,
-    'studytime': studytime,
-    'failures': failures,
+    'traveltime': 1, 'studytime': studytime, 'failures': failures,
     'schoolsup': encode_binary(schoolsup),
     'famsup': encode_binary(famsup),
     'paid': encode_binary(paid),
-    'activities': 0,
-    'nursery': 1,
+    'activities': 0, 'nursery': 1,
     'higher': encode_binary(higher),
     'internet': encode_binary(internet),
     'romantic': encode_binary(romantic),
-    'famrel': famrel,
-    'freetime': freetime,
-    'goout': goout,
-    'Dalc': Dalc,
-    'Walc': Walc,
-    'health': health,
-    'absences': absences
+    'famrel': famrel, 'freetime': freetime, 'goout': goout,
+    'Dalc': Dalc, 'Walc': Walc, 'health': health, 'absences': absences
 }
 
-# Align with training feature order
 input_array = np.array([[input_dict[f] for f in feature_names]])
 input_scaled = scaler.transform(input_array)
 
@@ -119,10 +146,10 @@ if st.button("🔍 Predict", use_container_width=True):
     with col_res1:
         if pred == 1:
             st.success("## ✅ PASS")
-            st.markdown(f"The student is likely to **pass**.")
+            st.markdown("The student is likely to **pass**.")
         else:
             st.error("## ❌ FAIL")
-            st.markdown(f"The student is likely to **fail**.")
+            st.markdown("The student is likely to **fail**.")
 
     with col_res2:
         st.metric("Pass Probability", f"{prob*100:.1f}%")
