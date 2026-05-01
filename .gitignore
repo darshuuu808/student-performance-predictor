@@ -1,0 +1,10 @@
+venv/
+data/
+__pycache__/
+.ipynb_checkpoints/
+*.pyc
+app/model.keras
+app/scaler.pkl
+app/feature_names.pkl
+*.keras
+*.pkl
